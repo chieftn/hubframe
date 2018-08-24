@@ -7,8 +7,5 @@ namespace IoTPlatformFrame.ViewModels
 {
     public class HomeViewModel
     {
-        public string BearerToken { get; set; }
-        public string UserIdentifier { get; set;}
-        public string SubscriptionIdentifier { get; set; }
     }
 }

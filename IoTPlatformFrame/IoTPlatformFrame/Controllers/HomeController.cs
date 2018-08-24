@@ -1,87 +1,69 @@
-﻿using IoTPlatformFrame.Utilities;
-using Microsoft.Owin.Security;
-using Microsoft.Owin.Security.OpenIdConnect;
+﻿using Microsoft.IdentityModel.Clients.ActiveDirectory;
 using System;
 using System.Collections.Generic;
 using System.Configuration;
 using System.Linq;
 using System.Security.Claims;
+using System.Threading.Tasks;
 using System.Web;
 using System.Web.Mvc;
-using System.Threading.Tasks;
-using IoTPlatformFrame.Models;
-using IoTPlatformFrame.ViewModels;
 
 namespace IoTPlatformFrame.Controllers
 {
     public class HomeController : Controller
     {
-        private DataAccess db = new DataAccess();
-
-        public async Task<ActionResult> Index()
+        public ActionResult Index()
         {
-            HomeViewModel viewModel = null;
-
-            if (ClaimsPrincipal.Current.Identity.IsAuthenticated)
-            {
-                string userId = ClaimsPrincipal.Current.FindFirst(ClaimTypes.Name).Value;
-                var connectedSubscription = db.Subscriptions.First<Subscription>(s => s.ConnectedBy == userId);
-                var bearerToken = await AzureResourceManagerProxy.GetBearerToken(connectedSubscription.Id, connectedSubscription.DirectoryId);
-
-                viewModel = new HomeViewModel
-                {
-                    BearerToken = bearerToken,
-                    UserIdentifier = userId,
-                    SubscriptionIdentifier = connectedSubscription.Id
-                };
-            }
-
-            return View(viewModel);
+            return View();
         }
 
-        public async Task ConnectSubscription(string subscriptionId)
+        public ActionResult Error(string message)
         {
-            string tenantIdentifier = await AzureResourceManagerProxy.GetTenantIdentifier(subscriptionId);
-            if (string.IsNullOrEmpty(tenantIdentifier)) return;
+            ViewBag.Message = message;
+            return View("Error");
+        }
 
-            if (!User.Identity.IsAuthenticated || !tenantIdentifier.Equals(ClaimsPrincipal.Current.FindFirst
-                 ("http://schemas.microsoft.com/identity/claims/tenantid").Value))
-            {
-                HttpContext.GetOwinContext().Environment.Add("Authority",
-                    string.Format(ConfigurationManager.AppSettings["Authority"] + "OAuth2/Authorize", tenantIdentifier));
+        public async Task<ActionResult> Token()
+        {
+            var bearerToken = await this.GetArmBearerToken();
+            return Json(new { bearerToken = bearerToken }, JsonRequestBehavior.AllowGet);
+        }
 
-                Dictionary<string, string> dict = new Dictionary<string, string>();
-                dict["prompt"] = "select_account";
+        private string GetClaimsPrincipalToken()
+        {
+            var bootstrapContext = ClaimsPrincipal.Current.Identities.First().BootstrapContext as System.IdentityModel.Tokens.BootstrapContext;
+            string userAccessToken = bootstrapContext.Token;
 
-                HttpContext.GetOwinContext().Authentication.Challenge(
-                    new AuthenticationProperties(dict) { RedirectUri = this.Url.Action("ConnectSubscription", "Home") + "?subscriptionId=" + subscriptionId },
-                    OpenIdConnectAuthenticationDefaults.AuthenticationType);
-            }
-            else
-            {
-                string objectIdOfCloudSenseServicePrincipalInDirectory = await
-                    AzureActiveDirectoryGraphProxy.GetObjectIdOfServicePrincipalInDirectory(tenantIdentifier, ConfigurationManager.AppSettings["ClientID"]);
+            return userAccessToken;
+        }
 
-                await AzureResourceManagerProxy.GrantRoleToServicePrincipalOnSubscription
-                   (objectIdOfCloudSenseServicePrincipalInDirectory, subscriptionId, tenantIdentifier);
+        private string GetClaimsPrincipalIdentifier()
+        {
+            string signedInUserUniqueName = ClaimsPrincipal.Current.FindFirst(ClaimTypes.Name).Value.Split('#')[ClaimsPrincipal.Current.FindFirst(ClaimTypes.Name).Value.Split('#').Length - 1];
+            return signedInUserUniqueName;
+        }
 
-                Subscription s = new Subscription()
-                {
-                    Id = subscriptionId,
-                    DirectoryId = tenantIdentifier,
-                    ConnectedBy = ClaimsPrincipal.Current.FindFirst(ClaimTypes.Name).Value,
-                    ConnectedOn = DateTime.Now
-                };
+        private async Task<string> GetArmBearerToken()
+        {
+            var token = GetClaimsPrincipalToken();
+            var userIdentifier = GetClaimsPrincipalIdentifier();
+            var aadClientIdentifier = ConfigurationManager.AppSettings["ida:ClientID"];
+            var aadClientSecret = ConfigurationManager.AppSettings["ida:Password"];
 
-                if (db.Subscriptions.Find(s.Id) == null)
-                {
-                    db.Subscriptions.Add(s);
-                    db.SaveChanges();
-                }
+            AuthenticationContext authContext = new AuthenticationContext("https://login.microsoftonline.com/common");
 
-                Response.Redirect(this.Url.Action("Index", "Home"));
-            }
+            //The Client here is the SPA in Azure AD. The first param is the ClientId and the second is a key created in the Azure Portal for the AD App
+            ClientCredential credential = new ClientCredential(aadClientIdentifier, aadClientSecret);
 
+            //Get username from Claims
+            //string userName = ClaimsPrincipal.Current.FindFirst(ClaimTypes.Upn) != null ? ClaimsPrincipal.Current.FindFirst(ClaimTypes.Upn).Value : ClaimsPrincipal.Current.FindFirst(ClaimTypes.Email).Value;
+
+            //Creating UserAssertion used for the "On-Behalf-Of" flow
+            UserAssertion userAssertion = new UserAssertion(token, "urn:ietf:params:oauth:grant-type:jwt-bearer", userIdentifier);
+
+            //Getting the token to talk to the external API
+            var result = await authContext.AcquireTokenAsync("https://management.core.windows.net/", credential, userAssertion);
+            return result.AccessToken;
 
         }
     }

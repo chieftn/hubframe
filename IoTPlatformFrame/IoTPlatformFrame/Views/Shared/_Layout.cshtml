@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>@ViewBag.Title - Azure IoT Platform</title>
+    <title>@ViewBag.Title - OpenID Connect MultiTenant Sample</title>
     @Styles.Render("~/Content/css")
     @Scripts.Render("~/bundles/modernizr")
 </head>
@@ -18,9 +18,12 @@
                 </button>
                 @Html.ActionLink("Azure IoT Platform", "Index", "Home", new { area = "" }, new { @class = "navbar-brand" })
             </div>
+            <div class="navbar-collapse collapse">
+                @Html.Partial("_LoginPartial")
+            </div>
         </div>
     </div>
-    <div class="container body-content">
+    <div>
         @RenderBody()
         <hr />
         <footer>

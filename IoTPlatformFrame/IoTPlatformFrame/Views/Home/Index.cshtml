@@ -1,25 +1,5 @@
-﻿@model IoTPlatformFrame.ViewModels.HomeViewModel
-@{
+﻿@{
     ViewBag.Title = "Home Page";
 }
 
-<div class="jumbotron">
-    <p class="lead">IoT Hub...outside the Azure Portal</p>
-    @using (Html.BeginForm("ConnectSubscription", "Home"))
-    {
-        <div class="input-group" style="width:330px">
-            <input name="subscriptionId" type="text" class="form-control" placeholder="Enter your Azure subscription id">
-            <span class="input-group-btn">
-                <button class="btn btn-primary" type="submit">Connect</button>
-            </span>
-        </div>   
-    }
-</div>
-@if (Model != null)
-{
-    <div><span>User ID: </span>@Model.UserIdentifier</div>
-    <div><span>Bearer Token: </span>@Model.BearerToken</div>
-    <div><span>Subscription: </span>@Model.SubscriptionIdentifier</div>
-
-
-}
+<div>Hello World</div>

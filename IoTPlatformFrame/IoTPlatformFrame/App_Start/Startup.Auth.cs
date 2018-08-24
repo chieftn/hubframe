@@ -1,107 +1,74 @@
-﻿//----------------------------------------------------------------------------------------------
-//    Licensed under the Apache License, Version 2.0 (the "License");
-//    you may not use this file except in compliance with the License.
-//    You may obtain a copy of the License at
-//
-//      http://www.apache.org/licenses/LICENSE-2.0
-//
-//    Unless required by applicable law or agreed to in writing, software
-//    distributed under the License is distributed on an "AS IS" BASIS,
-//    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-//    See the License for the specific language governing permissions and
-//    limitations under the License.
-//----------------------------------------------------------------------------------------------
-using Microsoft.IdentityModel.Clients.ActiveDirectory;
-using Microsoft.Owin.Security;
-using Microsoft.Owin.Security.Cookies;
-using Microsoft.Owin.Security.OpenIdConnect;
+﻿using Microsoft.Owin.Security.Cookies;
 using Owin;
 using System;
 using System.Collections.Generic;
-using System.Configuration;
-using System.Security.Claims;
 using System.Linq;
-using System.Threading.Tasks;
 using System.Web;
-using System.Net.Http;
-using System.Net.Http.Headers;
-using System.Net;
-using System.Web.Mvc;
-using IoTPlatformFrame.Utilities;
+using Microsoft.Owin.Security;
+using Microsoft.Owin.Security.OpenIdConnect;
+using System.Threading.Tasks;
+using System.Configuration;
+using System.IdentityModel.Claims;
+using System.IdentityModel.Tokens;
 
 namespace IoTPlatformFrame
 {
     public partial class Startup
     {
-        private DataAccess db = new DataAccess();
         public void ConfigureAuth(IAppBuilder app)
         {
-            string ClientId = ConfigurationManager.AppSettings["ClientID"];
-            string Password = ConfigurationManager.AppSettings["Password"];
-            string Authority = string.Format(ConfigurationManager.AppSettings["Authority"], "common");
-            string AzureResourceManagerIdentifier = ConfigurationManager.AppSettings["AzureResourceManagerIdentifier"];
+            string ClientId = ConfigurationManager.AppSettings["ida:ClientID"];
+            //fixed address for multitenant apps in the public cloud
+            string Authority = "https://login.microsoftonline.com/common/";
 
             app.SetDefaultSignInAsAuthenticationType(CookieAuthenticationDefaults.AuthenticationType);
+
             app.UseCookieAuthentication(new CookieAuthenticationOptions { });
+
             app.UseOpenIdConnectAuthentication(
                 new OpenIdConnectAuthenticationOptions
                 {
                     ClientId = ClientId,
                     Authority = Authority,
-                    RedirectUri = "https://localhost:44394/",
                     TokenValidationParameters = new System.IdentityModel.Tokens.TokenValidationParameters
                     {
+                        // instead of using the default validation (validating against a single issuer value, as we do in line of business apps), 
+                        // we inject our own multitenant validation logic
                         ValidateIssuer = false,
+                        SaveSigninToken = true
                     },
                     Notifications = new OpenIdConnectAuthenticationNotifications()
                     {
                         RedirectToIdentityProvider = (context) =>
                         {
-                            object obj = null;
-                            if (context.OwinContext.Environment.TryGetValue("Authority", out obj))
-                            {
-                                string authority = obj as string;
-                                if (authority != null)
-                                {
-                                    context.ProtocolMessage.IssuerAddress = authority;
-                                }
-                            }
-                            context.ProtocolMessage.PostLogoutRedirectUri = new UrlHelper(HttpContext.Current.Request.RequestContext).Action
-                                ("Index", "Home", null, HttpContext.Current.Request.Url.Scheme);
-                            context.ProtocolMessage.Prompt = "select_account";
-                            context.ProtocolMessage.Resource = AzureResourceManagerIdentifier;
+                            // This ensures that the address used for sign in and sign out is picked up dynamically from the request
+                            // this allows you to deploy your app (to Azure Web Sites, for example)without having to change settings
+                            // Remember that the base URL of the address used here must be provisioned in Azure AD beforehand.
+                            string appBaseUrl = context.Request.Scheme + "://" + context.Request.Host + context.Request.PathBase;
+                            context.ProtocolMessage.RedirectUri = appBaseUrl;
+                            context.ProtocolMessage.PostLogoutRedirectUri = appBaseUrl;
                             return Task.FromResult(0);
                         },
-                        AuthorizationCodeReceived = async (context) =>
-                        {
-                            ClientCredential credential = new ClientCredential(ClientId, Password);
-                            string tenantID = context.AuthenticationTicket.Identity.FindFirst("http://schemas.microsoft.com/identity/claims/tenantid").Value;
-                            string signedInUserUniqueName = context.AuthenticationTicket.Identity.FindFirst(ClaimTypes.Name).Value.Split('#')[context.AuthenticationTicket.Identity.FindFirst(ClaimTypes.Name).Value.Split('#').Length - 1];
-
-                            var tokenCache = new ADALTokenCache(signedInUserUniqueName);
-                            tokenCache.Clear();
-
-                            AuthenticationContext authContext = new AuthenticationContext(string.Format("https://login.windows.net/{0}", tenantID), tokenCache);
-
-                            //var items = authContext.TokenCache.ReadItems().ToList();
-
-                            AuthenticationResult result = await authContext.AcquireTokenByAuthorizationCodeAsync(
-                                context.Code, new Uri(HttpContext.Current.Request.Url.GetLeftPart(UriPartial.Path)), credential);
-
-                            //items = authContext.TokenCache.ReadItems().ToList();
-
-                            return;
-                        },
+                        // we use this notification for injecting our custom logic
                         SecurityTokenValidated = (context) =>
                         {
+                            // retriever caller data from the incoming principal
                             string issuer = context.AuthenticationTicket.Identity.FindFirst("iss").Value;
-                            if (!issuer.StartsWith("https://sts.windows.net/"))
-                                throw new System.IdentityModel.Tokens.SecurityTokenValidationException();
+                            string UPN = context.AuthenticationTicket.Identity.FindFirst(ClaimTypes.Name).Value;
+                            string tenantID = context.AuthenticationTicket.Identity.FindFirst("http://schemas.microsoft.com/identity/claims/tenantid").Value;
 
                             return Task.FromResult(0);
                         },
+                        AuthenticationFailed = (context) =>
+                        {
+                            context.OwinContext.Response.Redirect("/Home/Error?message=" + context.Exception.Message);
+                            context.HandleResponse(); // Suppress the exception
+                            return Task.FromResult(0);
+                        }
                     }
                 });
+
         }
+
     }
 }
